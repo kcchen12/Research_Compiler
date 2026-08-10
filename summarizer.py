@@ -122,11 +122,6 @@ class PaperSummarizer:
             except Exception as exc:
                 raise SummarizationError(str(exc)) from exc
             output_text = response.text
-        elif self.provider == "copilot":
-            raise SummarizationError(
-                "GitHub Copilot credits cannot be used by this standalone app. "
-                "Choose OpenAI or Gemini for AI summaries."
-            )
         else:
             raise SummarizationError(f"Unsupported AI provider: {self.provider}")
 

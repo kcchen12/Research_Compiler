@@ -65,7 +65,7 @@ st.caption("Monitor newly published papers and generate weekly/biweekly digests.
 
 with st.sidebar:
     st.subheader("AI Settings")
-    provider_options = ["openai", "gemini", "copilot"]
+    provider_options = ["openai", "gemini"]
     configured_provider = (
         config.ai_provider if config.ai_provider in provider_options else "openai"
     )
@@ -75,12 +75,7 @@ with st.sidebar:
         index=provider_options.index(configured_provider),
     )
     ai_model = st.text_input("Model", value=config.default_model)
-    if ai_provider == "copilot":
-        st.warning(
-            "GitHub Copilot credits cannot be used by this standalone app. "
-            "Choose OpenAI or Gemini for AI summaries."
-        )
-    elif ai_provider == "openai" and not config.openai_api_key:
+    if ai_provider == "openai" and not config.openai_api_key:
         st.info("OPENAI_API_KEY is missing from .env.")
     elif ai_provider == "gemini" and not config.gemini_api_key:
         st.info("GEMINI_API_KEY is missing from .env.")
@@ -171,33 +166,6 @@ if st.button("Generate Digest"):
     new_papers = st.session_state.new_papers
     if not new_papers:
         st.info("No unseen papers available for digest generation.")
-    elif ai_provider == "copilot":
-        st.warning(
-            "Digest created without AI summaries because GitHub Copilot does not "
-            "expose an API for this app to use."
-        )
-        summarized = []
-        for paper in new_papers:
-            paper_with_summary = dict(paper)
-            paper_with_summary["summary"] = INSUFFICIENT_TEXT_SUMMARY
-            summarized.append(paper_with_summary)
-
-        md = build_digest_markdown(
-            summarized,
-            st.session_state.date_range[0],
-            st.session_state.date_range[1],
-            interests,
-        )
-        html = markdown_to_html(md)
-        db.mark_digest_papers(summarized)
-
-        st.session_state.digest_markdown = md
-        st.session_state.digest_html = html
-        st.session_state.new_papers = []
-        st.session_state.seen_papers = st.session_state.ranked_papers
-        st.success("Digest generated. New papers were added to digest history.")
-        st.download_button("Download Markdown", md, file_name="research_digest.md", mime="text/markdown")
-        st.download_button("Download HTML", html, file_name="research_digest.html", mime="text/html")
     else:
         summarizer = PaperSummarizer(
             db=db,
