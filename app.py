@@ -4,6 +4,7 @@ from datetime import date, timedelta
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 import pandas as pd
 import streamlit as st
@@ -58,6 +59,8 @@ if "digest_markdown" not in st.session_state:
     st.session_state.digest_markdown = ""
 if "digest_html" not in st.session_state:
     st.session_state.digest_html = ""
+if "last_ai_request_at" not in st.session_state:
+    st.session_state.last_ai_request_at = 0.0
 
 
 st.title("Research Paper Digest")
@@ -177,14 +180,22 @@ if st.button("Generate Digest"):
 
         summarized = []
         with st.spinner("Generating paper summaries..."):
-            for paper in new_papers:
+            total = len(new_papers)
+            progress = st.progress(0)
+            for index, paper in enumerate(new_papers, start=1):
                 paper_with_summary = dict(paper)
                 try:
+                    if ai_provider == "gemini":
+                        elapsed = time.monotonic() - st.session_state.last_ai_request_at
+                        if elapsed < 13:
+                            time.sleep(13 - elapsed)
+                        st.session_state.last_ai_request_at = time.monotonic()
                     paper_with_summary["summary"] = summarizer.summarize_paper(paper, interests)
                 except SummarizationError as exc:
                     st.warning(f"Summary failed for '{paper.get('title')}': {exc}")
                     paper_with_summary["summary"] = INSUFFICIENT_TEXT_SUMMARY
                 summarized.append(paper_with_summary)
+                progress.progress(index / total)
 
         md = build_digest_markdown(summarized, st.session_state.date_range[0], st.session_state.date_range[1], interests)
         html = markdown_to_html(md)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from typing import Any
 
 import google.generativeai as genai
@@ -24,6 +25,28 @@ INSUFFICIENT_TEXT_SUMMARY = {
 
 class SummarizationError(Exception):
     pass
+
+
+def _summarization_error_message(exc: Exception) -> str:
+    text = str(exc)
+    if "GenerateRequestsPerMinutePerProjectPerModel-FreeTier" in text:
+        return (
+            "Gemini free-tier rate limit reached for this model "
+            "(5 requests per minute). Wait a minute and try again, or generate "
+            "a digest with fewer new papers."
+        )
+    if "exceeded your current quota" in text.lower():
+        return "Provider quota exceeded. Check the provider billing/quota page or try again later."
+    return text
+
+
+def _retry_delay_seconds(exc: Exception) -> float | None:
+    match = re.search(r"retry_delay\s*\{\s*seconds:\s*(\d+)", str(exc))
+    if match:
+        return float(match.group(1)) + 1.0
+    if "GenerateRequestsPerMinutePerProjectPerModel-FreeTier" in str(exc):
+        return 65.0
+    return None
 
 
 def _parse_summary_json(output_text: str) -> dict[str, Any]:
@@ -118,9 +141,9 @@ class PaperSummarizer:
             genai.configure(api_key=self.gemini_key)
             model = genai.GenerativeModel(self.model)
             try:
-                response = model.generate_content(prompt)
+                response = self._generate_gemini_content(model, prompt)
             except Exception as exc:
-                raise SummarizationError(str(exc)) from exc
+                raise SummarizationError(_summarization_error_message(exc)) from exc
             output_text = response.text
         else:
             raise SummarizationError(f"Unsupported AI provider: {self.provider}")
@@ -144,3 +167,13 @@ class PaperSummarizer:
             raise SummarizationError(f"Summary missing fields: {sorted(missing)}")
 
         return parsed
+
+    def _generate_gemini_content(self, model: Any, prompt: str) -> Any:
+        try:
+            return model.generate_content(prompt)
+        except Exception as exc:
+            delay = _retry_delay_seconds(exc)
+            if delay is None:
+                raise
+            time.sleep(delay)
+            return model.generate_content(prompt)
