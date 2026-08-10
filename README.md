@@ -36,6 +36,8 @@ Copy `.env.example` to `.env` and set:
 - `OPENAI_API_KEY` (if using OpenAI)
 - `GEMINI_API_KEY` (if using Gemini)
 
+For Gemini, use a current model such as `gemini-3.5-flash`.
+
 ## Run
 
 ```bash
