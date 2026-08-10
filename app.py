@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from pathlib import Path
+import subprocess
+import sys
 
 import pandas as pd
 import streamlit as st
+from streamlit.runtime.scriptrunner import get_script_run_ctx
 
 from config import DB_PATH, JOURNALS, ensure_data_dir, load_config
 from database import PaperDatabase
@@ -12,6 +16,28 @@ from paper_fetcher import PaperFetcherError, fetch_papers
 from relevance import rank_papers
 from summarizer import INSUFFICIENT_TEXT_SUMMARY, PaperSummarizer, SummarizationError
 
+
+def _launch_with_streamlit_when_run_directly() -> None:
+    if __name__ == "__main__" and get_script_run_ctx() is None:
+        script_path = Path(__file__).resolve()
+        raise SystemExit(
+            subprocess.call(
+                [
+                    sys.executable,
+                    "-m",
+                    "streamlit",
+                    "run",
+                    str(script_path),
+                    "--server.headless",
+                    "true",
+                    "--browser.gatherUsageStats",
+                    "false",
+                ]
+            )
+        )
+
+
+_launch_with_streamlit_when_run_directly()
 
 st.set_page_config(page_title="Research Paper Digest", layout="wide")
 
@@ -38,6 +64,28 @@ st.title("Research Paper Digest")
 st.caption("Monitor newly published papers and generate weekly/biweekly digests.")
 
 with st.sidebar:
+    st.subheader("AI Settings")
+    provider_options = ["openai", "gemini", "copilot"]
+    configured_provider = (
+        config.ai_provider if config.ai_provider in provider_options else "openai"
+    )
+    ai_provider = st.selectbox(
+        "Summary provider",
+        provider_options,
+        index=provider_options.index(configured_provider),
+    )
+    ai_model = st.text_input("Model", value=config.default_model)
+    if ai_provider == "copilot":
+        st.warning(
+            "GitHub Copilot credits cannot be used by this standalone app. "
+            "Choose OpenAI or Gemini for AI summaries."
+        )
+    elif ai_provider == "openai" and not config.openai_api_key:
+        st.info("OPENAI_API_KEY is missing from .env.")
+    elif ai_provider == "gemini" and not config.gemini_api_key:
+        st.info("GEMINI_API_KEY is missing from .env.")
+
+    st.divider()
     st.subheader("History")
     st.metric("Tracked in digest history", db.count_seen())
 
@@ -123,11 +171,38 @@ if st.button("Generate Digest"):
     new_papers = st.session_state.new_papers
     if not new_papers:
         st.info("No unseen papers available for digest generation.")
+    elif ai_provider == "copilot":
+        st.warning(
+            "Digest created without AI summaries because GitHub Copilot does not "
+            "expose an API for this app to use."
+        )
+        summarized = []
+        for paper in new_papers:
+            paper_with_summary = dict(paper)
+            paper_with_summary["summary"] = INSUFFICIENT_TEXT_SUMMARY
+            summarized.append(paper_with_summary)
+
+        md = build_digest_markdown(
+            summarized,
+            st.session_state.date_range[0],
+            st.session_state.date_range[1],
+            interests,
+        )
+        html = markdown_to_html(md)
+        db.mark_digest_papers(summarized)
+
+        st.session_state.digest_markdown = md
+        st.session_state.digest_html = html
+        st.session_state.new_papers = []
+        st.session_state.seen_papers = st.session_state.ranked_papers
+        st.success("Digest generated. New papers were added to digest history.")
+        st.download_button("Download Markdown", md, file_name="research_digest.md", mime="text/markdown")
+        st.download_button("Download HTML", html, file_name="research_digest.html", mime="text/html")
     else:
         summarizer = PaperSummarizer(
             db=db,
-            provider=config.ai_provider,
-            model=config.default_model,
+            provider=ai_provider,
+            model=ai_model,
             openai_key=config.openai_api_key,
             gemini_key=config.gemini_api_key,
         )

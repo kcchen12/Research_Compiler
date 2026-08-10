@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 import google.generativeai as genai
-from openai import OpenAI
+from openai import OpenAI, OpenAIError
 
 from database import PaperDatabase
 
@@ -103,19 +103,30 @@ class PaperSummarizer:
             if not self.openai_key:
                 raise SummarizationError("OPENAI_API_KEY is missing.")
             client = OpenAI(api_key=self.openai_key)
-            response = client.responses.create(
-                model=self.model,
-                input=prompt,
-                temperature=0.2,
-            )
+            try:
+                response = client.responses.create(
+                    model=self.model,
+                    input=prompt,
+                    temperature=0.2,
+                )
+            except OpenAIError as exc:
+                raise SummarizationError(str(exc)) from exc
             output_text = response.output_text
         elif self.provider == "gemini":
             if not self.gemini_key:
                 raise SummarizationError("GEMINI_API_KEY is missing.")
             genai.configure(api_key=self.gemini_key)
             model = genai.GenerativeModel(self.model)
-            response = model.generate_content(prompt)
+            try:
+                response = model.generate_content(prompt)
+            except Exception as exc:
+                raise SummarizationError(str(exc)) from exc
             output_text = response.text
+        elif self.provider == "copilot":
+            raise SummarizationError(
+                "GitHub Copilot credits cannot be used by this standalone app. "
+                "Choose OpenAI or Gemini for AI summaries."
+            )
         else:
             raise SummarizationError(f"Unsupported AI provider: {self.provider}")
 

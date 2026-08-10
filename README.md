@@ -31,12 +31,18 @@ pip install -r requirements.txt
 
 Copy `.env.example` to `.env` and set:
 
-- `AI_PROVIDER` (`openai` or `gemini`)
+- `AI_PROVIDER` (`openai` or `gemini`; `copilot` is shown in the UI only to explain why Copilot credits cannot be used for direct API summaries)
 - `AI_MODEL` (for example `gpt-4o-mini`)
 - `OPENAI_API_KEY` (if using OpenAI)
 - `GEMINI_API_KEY` (if using Gemini)
 
 ## Run
+
+```bash
+python app.py
+```
+
+The standard Streamlit command also works:
 
 ```bash
 python -m streamlit run app.py
