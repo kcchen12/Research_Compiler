@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from dotenv import load_dotenv
 
@@ -120,8 +120,8 @@ def ensure_data_dir() -> None:
 
 @dataclass(frozen=True)
 class AppConfig:
-    openai_api_key: str | None
-    gemini_api_key: str | None
+    openai_api_key: Optional[str]
+    gemini_api_key: Optional[str]
     ai_provider: str
     default_model: str
 
@@ -150,7 +150,7 @@ def format_quota_updated_date() -> str:
     return f"{int(month)}/{int(day)}/{year}"
 
 
-def _get_secret_value(name: str) -> str | None:
+def _get_secret_value(name: str) -> Optional[str]:
     try:
         import streamlit as st
 
