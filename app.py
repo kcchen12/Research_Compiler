@@ -122,6 +122,13 @@ def _paper_identity(paper: dict) -> tuple:
     )
 
 
+def _paper_choice_label(paper: dict) -> str:
+    title = paper.get("title") or "Untitled"
+    published = paper.get("publication_date") or "unknown date"
+    score = paper.get("relevance_score", 0)
+    return f"{score:.3f} | {published} | {title}"
+
+
 st.title("Research Paper Digest")
 st.caption("Monitor newly published papers and generate weekly/biweekly digests.")
 
@@ -288,6 +295,39 @@ if st.session_state.ranked_papers:
         f"**{len(st.session_state.seen_papers)}** previously seen"
     )
 
+selected_digest_papers = st.session_state.new_papers
+if st.session_state.new_papers:
+    st.subheader("Digest Selection")
+    digest_mode = st.radio(
+        "Choose papers for this digest",
+        ["Top scored papers", "Manual selection"],
+        horizontal=True,
+    )
+    if digest_mode == "Top scored papers":
+        digest_count = st.number_input(
+            "Number of top-scored new papers to digest",
+            min_value=1,
+            max_value=len(st.session_state.new_papers),
+            value=min(5, len(st.session_state.new_papers)),
+            step=1,
+        )
+        selected_digest_papers = st.session_state.new_papers[: int(digest_count)]
+    else:
+        choice_map = {
+            _paper_choice_label(paper): paper for paper in st.session_state.new_papers
+        }
+        selected_labels = st.multiselect(
+            "New papers to include",
+            list(choice_map.keys()),
+            default=list(choice_map.keys())[: min(5, len(choice_map))],
+        )
+        selected_digest_papers = [choice_map[label] for label in selected_labels]
+
+    st.caption(
+        f"{len(selected_digest_papers)} of {len(st.session_state.new_papers)} "
+        "new papers selected for digest generation."
+    )
+
 for paper in st.session_state.ranked_papers:
     badge = "SEEN" if db.is_seen(paper) else "NEW"
     with st.expander(
@@ -301,9 +341,10 @@ for paper in st.session_state.ranked_papers:
         st.write(f"**Abstract:** {paper.get('abstract') or 'N/A'}")
 
 if st.button("Generate Digest"):
-    new_papers = st.session_state.new_papers
+    all_new_papers = st.session_state.new_papers
+    new_papers = selected_digest_papers
     if not new_papers:
-        st.info("No unseen papers available for digest generation.")
+        st.info("No new papers selected for digest generation.")
     else:
         summarizer = PaperSummarizer(
             db=db,
@@ -379,7 +420,7 @@ if st.button("Generate Digest"):
             st.session_state.digest_markdown = md
             st.session_state.digest_html = html
             st.session_state.new_papers = [
-                paper for paper in new_papers if _paper_identity(paper) not in summarized_keys
+                paper for paper in all_new_papers if _paper_identity(paper) not in summarized_keys
             ]
             st.session_state.seen_papers = [
                 paper for paper in st.session_state.ranked_papers if db.is_seen(paper)
