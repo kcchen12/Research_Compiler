@@ -18,6 +18,17 @@ class TestSummarizer(unittest.TestCase):
 
         self.assertEqual(parsed["tldr"], "Two sentences.")
 
+    def test_parse_summary_json_repairs_invalid_latex_backslashes(self):
+        parsed = _parse_summary_json(
+            r"""{
+                "tldr": "Uses \delta scaling for boundary-layer effects.",
+                "key_findings": ["Pressure follows \phi trends."]
+            }"""
+        )
+
+        self.assertIn("\\delta", parsed["tldr"])
+        self.assertIn("\\phi", parsed["key_findings"][0])
+
     def test_summarization_error_message_compacts_gemini_rate_limit(self):
         message = _summarization_error_message(
             Exception("GenerateRequestsPerMinutePerProjectPerModel-FreeTier")

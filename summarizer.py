@@ -68,18 +68,34 @@ def _parse_summary_json(output_text: str) -> dict[str, Any]:
         cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"\s*```$", "", cleaned).strip()
 
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError:
-        start = cleaned.find("{")
-        end = cleaned.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            raise
-        parsed = json.loads(cleaned[start : end + 1])
+    json_text = _extract_json_object(cleaned)
+    parsed = _loads_summary_json(json_text)
 
     if not isinstance(parsed, dict):
         raise SummarizationError("Model output JSON must be an object.")
     return parsed
+
+
+def _extract_json_object(text: str) -> str:
+    try:
+        json.loads(text)
+        return text
+    except json.JSONDecodeError:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise
+        return text[start : end + 1]
+
+
+def _loads_summary_json(text: str) -> Any:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as exc:
+        if "Invalid \\escape" not in exc.msg:
+            raise
+        repaired = re.sub(r'\\(?!["\\/bfnrtu])', r"\\\\", text)
+        return json.loads(repaired)
 
 
 class PaperSummarizer:
