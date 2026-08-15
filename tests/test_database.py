@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import date
 import tempfile
 import unittest
 
@@ -35,6 +36,24 @@ class TestPaperDatabase(unittest.TestCase):
             new_papers, seen_papers = db.split_new_and_seen(papers)
             self.assertEqual(len(new_papers), 0)
             self.assertEqual(len(seen_papers), 2)
+
+    def test_records_daily_api_usage_by_provider_and_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = PaperDatabase(Path(tmp) / "papers.db")
+            usage_date = date(2026, 8, 15)
+
+            self.assertEqual(
+                db.get_daily_api_usage("gemini", "gemini-3.5-flash-lite", usage_date),
+                (0, 0),
+            )
+
+            db.record_api_request("gemini", "gemini-3.5-flash-lite", 123, usage_date)
+            db.record_api_request("gemini", "gemini-3.5-flash-lite", 77, usage_date)
+
+            self.assertEqual(
+                db.get_daily_api_usage("gemini", "gemini-3.5-flash-lite", usage_date),
+                (2, 200),
+            )
 
 
 if __name__ == "__main__":

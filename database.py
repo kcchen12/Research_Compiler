@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import hashlib
 import sqlite3
 from pathlib import Path
@@ -56,6 +56,18 @@ class PaperDatabase:
                     provider TEXT NOT NULL,
                     summary_json TEXT NOT NULL,
                     created_at TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS api_usage (
+                    usage_date TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    model TEXT NOT NULL,
+                    request_count INTEGER NOT NULL DEFAULT 0,
+                    token_count INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY (usage_date, provider, model)
                 )
                 """
             )
@@ -181,6 +193,54 @@ class PaperDatabase:
             conn.execute("DELETE FROM seen_papers")
             conn.execute("DELETE FROM seen_papers_no_doi")
             conn.execute("DELETE FROM summary_cache")
+            conn.commit()
+        finally:
+            self._close_connection(conn)
+
+    def get_daily_api_usage(
+        self,
+        provider: str,
+        model: str,
+        usage_date: date | None = None,
+    ) -> tuple[int, int]:
+        usage_date = usage_date or date.today()
+        conn = self._connect()
+        try:
+            row = conn.execute(
+                """
+                SELECT request_count, token_count
+                FROM api_usage
+                WHERE usage_date = ? AND provider = ? AND model = ?
+                """,
+                (usage_date.isoformat(), provider, model),
+            ).fetchone()
+            if not row:
+                return 0, 0
+            return int(row["request_count"]), int(row["token_count"])
+        finally:
+            self._close_connection(conn)
+
+    def record_api_request(
+        self,
+        provider: str,
+        model: str,
+        token_count: int,
+        usage_date: date | None = None,
+    ) -> None:
+        usage_date = usage_date or date.today()
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO api_usage
+                (usage_date, provider, model, request_count, token_count)
+                VALUES (?, ?, ?, 1, ?)
+                ON CONFLICT(usage_date, provider, model) DO UPDATE SET
+                    request_count = request_count + 1,
+                    token_count = token_count + excluded.token_count
+                """,
+                (usage_date.isoformat(), provider, model, token_count),
+            )
             conn.commit()
         finally:
             self._close_connection(conn)

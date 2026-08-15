@@ -10,7 +10,17 @@ import pandas as pd
 import streamlit as st
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
-from config import DB_PATH, JOURNALS, ensure_data_dir, load_config
+from config import (
+    DB_PATH,
+    JOURNALS,
+    enabled_gemini_models,
+    ensure_data_dir,
+    format_quota_updated_date,
+    gemini_request_spacing_seconds,
+    get_gemini_model_config,
+    load_config,
+    recommended_gemini_model,
+)
 from database import PaperDatabase
 from digest import build_digest_markdown, markdown_to_html
 from paper_fetcher import PaperFetcherError, fetch_papers
@@ -61,6 +71,51 @@ if "digest_html" not in st.session_state:
     st.session_state.digest_html = ""
 if "last_ai_request_at" not in st.session_state:
     st.session_state.last_ai_request_at = 0.0
+if "gemini_token_window" not in st.session_state:
+    st.session_state.gemini_token_window = []
+
+
+def _prune_gemini_token_window(model_id: str) -> None:
+    now = time.monotonic()
+    st.session_state.gemini_token_window = [
+        entry
+        for entry in st.session_state.gemini_token_window
+        if entry["model"] == model_id and now - entry["at"] < 60
+    ]
+
+
+def _gemini_tokens_in_window(model_id: str) -> int:
+    _prune_gemini_token_window(model_id)
+    return sum(entry["tokens"] for entry in st.session_state.gemini_token_window)
+
+
+def _track_gemini_tokens(model_id: str, token_count: int) -> None:
+    _prune_gemini_token_window(model_id)
+    st.session_state.gemini_token_window.append(
+        {"model": model_id, "tokens": token_count, "at": time.monotonic()}
+    )
+
+
+def _wait_for_gemini_request_slot(model_config, estimated_tokens: int) -> None:
+    spacing = gemini_request_spacing_seconds(model_config)
+    elapsed = time.monotonic() - st.session_state.last_ai_request_at
+    if elapsed < spacing:
+        time.sleep(spacing - elapsed)
+
+    while _gemini_tokens_in_window(model_config.api_model_id) + estimated_tokens > model_config.tpm:
+        oldest = min(st.session_state.gemini_token_window, key=lambda item: item["at"])
+        wait_seconds = max(1.0, 60 - (time.monotonic() - oldest["at"]))
+        time.sleep(wait_seconds)
+        _prune_gemini_token_window(model_config.api_model_id)
+
+
+def _paper_identity(paper: dict) -> tuple:
+    return (
+        (paper.get("doi") or "").strip().lower(),
+        (paper.get("title") or "").strip().lower(),
+        (paper.get("publication_date") or "").strip(),
+        (paper.get("url") or "").strip().lower(),
+    )
 
 
 st.title("Research Paper Digest")
@@ -68,7 +123,7 @@ st.caption("Monitor newly published papers and generate weekly/biweekly digests.
 
 with st.sidebar:
     st.subheader("AI Settings")
-    provider_options = ["openai", "gemini"]
+    provider_options = ["gemini"]
     configured_provider = (
         config.ai_provider if config.ai_provider in provider_options else "openai"
     )
@@ -77,11 +132,47 @@ with st.sidebar:
         provider_options,
         index=provider_options.index(configured_provider),
     )
-    ai_model = st.text_input("Model", value=config.default_model)
     if ai_provider == "openai" and not config.openai_api_key:
         st.info("OPENAI_API_KEY is missing from .env.")
     elif ai_provider == "gemini" and not config.gemini_api_key:
         st.info("GEMINI_API_KEY is missing from .env.")
+
+    if ai_provider == "gemini":
+        gemini_models = enabled_gemini_models()
+        recommended_model = recommended_gemini_model()
+        configured_model = get_gemini_model_config(config.default_model)
+        if not configured_model.enabled:
+            configured_model = recommended_model
+        model_labels = [model.ui_label for model in gemini_models]
+        selected_model_label = st.selectbox(
+            "AI Model",
+            model_labels,
+            index=gemini_models.index(configured_model),
+        )
+        selected_gemini_model = gemini_models[model_labels.index(selected_model_label)]
+        ai_model = selected_gemini_model.api_model_id
+        st.caption(f"Recommended for Research Compiler: {recommended_model.display_name}")
+        st.write(
+            "**Free-tier limits:**  \n"
+            f"{selected_gemini_model.rpm} requests/minute  \n"
+            f"{selected_gemini_model.tpm:,} tokens/minute  \n"
+            f"{selected_gemini_model.rpd} requests/day"
+        )
+        if selected_gemini_model.notes:
+            st.caption(selected_gemini_model.notes)
+        if selected_gemini_model.rpd <= 20:
+            st.warning("This model has a low daily free quota; large digests may exhaust it.")
+        st.caption(
+            "Free-tier quota information last updated: "
+            f"{format_quota_updated_date()}."
+        )
+    else:
+        openai_default_model = (
+            config.default_model
+            if not config.default_model.startswith("gemini-")
+            else "gpt-4o-mini"
+        )
+        ai_model = st.text_input("Model", value=openai_default_model)
 
     st.divider()
     st.subheader("History")
@@ -179,35 +270,81 @@ if st.button("Generate Digest"):
         )
 
         summarized = []
+        summarized_keys = set()
         with st.spinner("Generating paper summaries..."):
             total = len(new_papers)
             progress = st.progress(0)
+            status = st.empty()
             for index, paper in enumerate(new_papers, start=1):
                 paper_with_summary = dict(paper)
                 try:
-                    if ai_provider == "gemini":
-                        elapsed = time.monotonic() - st.session_state.last_ai_request_at
-                        if elapsed < 13:
-                            time.sleep(13 - elapsed)
+                    if ai_provider == "gemini" and summarizer.requires_api_summary(
+                        paper,
+                        interests,
+                    ):
+                        gemini_model_config = get_gemini_model_config(ai_model)
+                        daily_requests, _ = db.get_daily_api_usage("gemini", ai_model)
+                        if daily_requests >= gemini_model_config.rpd:
+                            st.error(
+                                "Daily Gemini free-tier quota reached for "
+                                f"{gemini_model_config.display_name} "
+                                f"({gemini_model_config.rpd} requests/day). "
+                                "No more new summary requests will be sent today."
+                            )
+                            break
+                        estimated_tokens = summarizer.estimate_request_tokens(paper, interests)
+                        if estimated_tokens > gemini_model_config.tpm:
+                            st.warning(
+                                f"Skipping '{paper.get('title')}' because the estimated "
+                                "prompt size exceeds the selected model's tokens-per-minute limit."
+                            )
+                            paper_with_summary["summary"] = INSUFFICIENT_TEXT_SUMMARY
+                            summarized.append(paper_with_summary)
+                            progress.progress(index / total)
+                            continue
+                        status.caption(
+                            "Generating summary "
+                            f"{index}/{total} with {gemini_model_config.display_name} "
+                            f"({daily_requests + 1}/{gemini_model_config.rpd} daily requests)."
+                        )
+                        _wait_for_gemini_request_slot(
+                            gemini_model_config,
+                            estimated_tokens,
+                        )
+                        db.record_api_request("gemini", ai_model, estimated_tokens)
+                        _track_gemini_tokens(ai_model, estimated_tokens)
                         st.session_state.last_ai_request_at = time.monotonic()
+                    else:
+                        status.caption(f"Using cached or local summary {index}/{total}.")
                     paper_with_summary["summary"] = summarizer.summarize_paper(paper, interests)
                 except SummarizationError as exc:
                     st.warning(f"Summary failed for '{paper.get('title')}': {exc}")
+                    if "quota" in str(exc).lower() or "rate limit" in str(exc).lower():
+                        st.info("Stopping new Gemini requests to avoid repeated quota failures.")
+                        break
                     paper_with_summary["summary"] = INSUFFICIENT_TEXT_SUMMARY
                 summarized.append(paper_with_summary)
+                summarized_keys.add(_paper_identity(paper))
                 progress.progress(index / total)
 
-        md = build_digest_markdown(summarized, st.session_state.date_range[0], st.session_state.date_range[1], interests)
-        html = markdown_to_html(md)
-        db.mark_digest_papers(summarized)
+        if summarized:
+            md = build_digest_markdown(summarized, st.session_state.date_range[0], st.session_state.date_range[1], interests)
+            html = markdown_to_html(md)
+            db.mark_digest_papers(summarized)
 
-        st.session_state.digest_markdown = md
-        st.session_state.digest_html = html
-        st.session_state.new_papers = []
-        st.session_state.seen_papers = st.session_state.ranked_papers
-        st.success("Digest generated. New papers were added to digest history.")
-        st.download_button("Download Markdown", md, file_name="research_digest.md", mime="text/markdown")
-        st.download_button("Download HTML", html, file_name="research_digest.html", mime="text/html")
+            st.session_state.digest_markdown = md
+            st.session_state.digest_html = html
+            st.session_state.new_papers = [
+                paper for paper in new_papers if _paper_identity(paper) not in summarized_keys
+            ]
+            st.session_state.seen_papers = [
+                paper for paper in st.session_state.ranked_papers if db.is_seen(paper)
+            ]
+            st.success("Digest generated. Summarized papers were added to digest history.")
+            st.download_button("Download Markdown", md, file_name="research_digest.md", mime="text/markdown")
+            st.download_button("Download HTML", html, file_name="research_digest.html", mime="text/html")
+        else:
+            st.info("No papers were summarized, so no digest was generated.")
 
 if st.session_state.digest_markdown:
     st.markdown("---")

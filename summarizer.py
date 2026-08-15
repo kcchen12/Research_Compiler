@@ -27,13 +27,26 @@ class SummarizationError(Exception):
     pass
 
 
+def _is_gemini_quota_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    quota_markers = [
+        "429",
+        "resource_exhausted",
+        "quota",
+        "rate limit",
+        "ratelimit",
+        "generaterequestsperminuteperprojectpermodel-freetier",
+    ]
+    return any(marker in text for marker in quota_markers)
+
+
 def _summarization_error_message(exc: Exception) -> str:
     text = str(exc)
-    if "GenerateRequestsPerMinutePerProjectPerModel-FreeTier" in text:
+    if _is_gemini_quota_error(exc):
         return (
-            "Gemini free-tier rate limit reached for this model "
-            "(5 requests per minute). Wait a minute and try again, or generate "
-            "a digest with fewer new papers."
+            "Gemini quota or rate limit reached for the selected model. "
+            "Wait for quota to reset, choose a higher-quota model, or generate "
+            "a smaller digest."
         )
     if "exceeded your current quota" in text.lower():
         return "Provider quota exceeded. Check the provider billing/quota page or try again later."
@@ -97,22 +110,42 @@ class PaperSummarizer:
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
+    def get_cached_summary(self, paper: dict[str, Any], interests: str) -> dict[str, Any] | None:
+        cache_key = self._cache_key(paper, interests)
+        cached = self.db.get_cached_summary(cache_key, self.provider)
+        if cached:
+            return json.loads(cached)
+        return None
+
+    def requires_api_summary(self, paper: dict[str, Any], interests: str) -> bool:
+        abstract = (paper.get("abstract") or "").strip()
+        if len(abstract) < 80:
+            return False
+        return self.get_cached_summary(paper, interests) is None
+
+    @staticmethod
+    def estimate_token_count(text: str) -> int:
+        return max(1, len(text) // 4)
+
+    def estimate_request_tokens(self, paper: dict[str, Any], interests: str) -> int:
+        return self.estimate_token_count(self._build_prompt(paper, interests))
+
     def summarize_paper(self, paper: dict[str, Any], interests: str) -> dict[str, Any]:
         abstract = (paper.get("abstract") or "").strip()
         if len(abstract) < 80:
             return INSUFFICIENT_TEXT_SUMMARY
 
         cache_key = self._cache_key(paper, interests)
-        cached = self.db.get_cached_summary(cache_key, self.provider)
-        if cached:
-            return json.loads(cached)
+        cached_summary = self.get_cached_summary(paper, interests)
+        if cached_summary:
+            return cached_summary
 
         summary = self._generate_summary(paper, interests)
         self.db.cache_summary(cache_key, self.provider, json.dumps(summary))
         return summary
 
-    def _generate_summary(self, paper: dict[str, Any], interests: str) -> dict[str, Any]:
-        prompt = (
+    def _build_prompt(self, paper: dict[str, Any], interests: str) -> str:
+        return (
             "You are summarizing an academic paper for a research digest. "
             "Use the title and abstract only. Output strict JSON with keys: "
             "tldr (2 sentences), key_findings (3-5 bullets as array), methods, "
@@ -121,6 +154,9 @@ class PaperSummarizer:
             f"\nTitle: {paper.get('title')}"
             f"\nAbstract: {paper.get('abstract')}"
         )
+
+    def _generate_summary(self, paper: dict[str, Any], interests: str) -> dict[str, Any]:
+        prompt = self._build_prompt(paper, interests)
 
         if self.provider == "openai":
             if not self.openai_key:
@@ -172,6 +208,8 @@ class PaperSummarizer:
         try:
             return model.generate_content(prompt)
         except Exception as exc:
+            if _is_gemini_quota_error(exc):
+                raise
             delay = _retry_delay_seconds(exc)
             if delay is None:
                 raise

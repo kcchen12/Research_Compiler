@@ -32,11 +32,12 @@ pip install -r requirements.txt
 Copy `.env.example` to `.env` and set:
 
 - `AI_PROVIDER` (`openai` or `gemini`)
-- `AI_MODEL` (for example `gpt-4o-mini`)
+- `AI_MODEL` (for example `gemini-3.5-flash-lite`)
 - `OPENAI_API_KEY` (if using OpenAI)
 - `GEMINI_API_KEY` (if using Gemini)
 
-For Gemini, use a current model such as `gemini-3.5-flash`.
+Gemini model choices and manually maintained free-tier quota limits are centralized
+in `config.py`. The recommended default is `gemini-3.5-flash-lite`.
 
 ## Run
 
