@@ -55,6 +55,29 @@ class TestPaperDatabase(unittest.TestCase):
                 (2, 200),
             )
 
+    def test_adds_and_deletes_custom_journal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = PaperDatabase(Path(tmp) / "papers.db")
+
+            db.add_custom_journal(
+                {
+                    "display_name": "Physics of Fluids",
+                    "openalex_name": "Physics of Fluids",
+                    "openalex_source_id": "S123",
+                    "crossref_container": "Physics of Fluids",
+                    "issns": ["1070-6631"],
+                }
+            )
+
+            journals = db.get_custom_journals()
+            self.assertIn("Physics of Fluids", journals)
+            self.assertEqual(journals["Physics of Fluids"]["openalex_source_id"], "S123")
+            self.assertEqual(journals["Physics of Fluids"]["issns"], ["1070-6631"])
+
+            db.delete_custom_journal("Physics of Fluids")
+
+            self.assertEqual(db.get_custom_journals(), {})
+
 
 if __name__ == "__main__":
     unittest.main()

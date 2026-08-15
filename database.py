@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 import hashlib
+import json
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -68,6 +69,18 @@ class PaperDatabase:
                     request_count INTEGER NOT NULL DEFAULT 0,
                     token_count INTEGER NOT NULL DEFAULT 0,
                     PRIMARY KEY (usage_date, provider, model)
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS custom_journals (
+                    name TEXT PRIMARY KEY,
+                    openalex_name TEXT NOT NULL,
+                    openalex_source_id TEXT,
+                    crossref_container TEXT NOT NULL,
+                    issns_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
                 )
                 """
             )
@@ -193,6 +206,63 @@ class PaperDatabase:
             conn.execute("DELETE FROM seen_papers")
             conn.execute("DELETE FROM seen_papers_no_doi")
             conn.execute("DELETE FROM summary_cache")
+            conn.commit()
+        finally:
+            self._close_connection(conn)
+
+    def get_custom_journals(self) -> dict[str, dict[str, Any]]:
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                """
+                SELECT name, openalex_name, openalex_source_id, crossref_container, issns_json
+                FROM custom_journals
+                ORDER BY name
+                """
+            ).fetchall()
+            journals: dict[str, dict[str, Any]] = {}
+            for row in rows:
+                journals[row["name"]] = {
+                    "openalex_name": row["openalex_name"],
+                    "openalex_source_id": row["openalex_source_id"],
+                    "crossref_container": row["crossref_container"],
+                    "issns": json.loads(row["issns_json"] or "[]"),
+                    "custom": True,
+                }
+            return journals
+        finally:
+            self._close_connection(conn)
+
+    def add_custom_journal(self, journal: dict[str, Any]) -> None:
+        name = (journal.get("display_name") or journal.get("openalex_name") or "").strip()
+        if not name:
+            raise ValueError("Journal name is required.")
+        now = datetime.now(timezone.utc).isoformat()
+        conn = self._connect()
+        try:
+            conn.execute(
+                """
+                INSERT OR REPLACE INTO custom_journals
+                (name, openalex_name, openalex_source_id, crossref_container, issns_json, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    name,
+                    journal.get("openalex_name") or name,
+                    journal.get("openalex_source_id"),
+                    journal.get("crossref_container") or name,
+                    json.dumps(journal.get("issns") or []),
+                    now,
+                ),
+            )
+            conn.commit()
+        finally:
+            self._close_connection(conn)
+
+    def delete_custom_journal(self, name: str) -> None:
+        conn = self._connect()
+        try:
+            conn.execute("DELETE FROM custom_journals WHERE name = ?", (name,))
             conn.commit()
         finally:
             self._close_connection(conn)

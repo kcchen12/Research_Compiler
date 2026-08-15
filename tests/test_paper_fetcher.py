@@ -6,6 +6,7 @@ from paper_fetcher import (
     PaperFetcherError,
     fetch_openalex_papers,
     fetch_papers,
+    search_journals,
 )
 
 
@@ -47,6 +48,52 @@ class TestPaperFetcher(unittest.TestCase):
         first_params = get.call_args_list[0].kwargs["params"]
         self.assertIn("journal:S152000018", first_params["filter"])
         self.assertEqual(first_params["per-page"], 100)
+
+    def test_openalex_uses_custom_journal_config(self):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {"meta": {"next_cursor": None}, "results": []}
+        journals = {
+            "Physics of Fluids": {
+                "openalex_source_id": "S123",
+                "crossref_container": "Physics of Fluids",
+                "issns": ["1070-6631"],
+            }
+        }
+
+        with patch("paper_fetcher.requests.get", return_value=response) as get:
+            papers = fetch_openalex_papers(
+                "Physics of Fluids",
+                date(2026, 8, 1),
+                date(2026, 8, 10),
+                journals=journals,
+            )
+
+        self.assertEqual(papers, [])
+        params = get.call_args.kwargs["params"]
+        self.assertIn("journal:S123", params["filter"])
+
+    def test_search_journals_normalizes_openalex_sources(self):
+        response = Mock()
+        response.raise_for_status.return_value = None
+        response.json.return_value = {
+            "results": [
+                {
+                    "id": "https://openalex.org/S123",
+                    "display_name": "Physics of Fluids",
+                    "issn_l": "1070-6631",
+                    "issn": ["1089-7666"],
+                }
+            ]
+        }
+
+        with patch("paper_fetcher.requests.get", return_value=response) as get:
+            results = search_journals("physics fluids")
+
+        self.assertEqual(results[0]["display_name"], "Physics of Fluids")
+        self.assertEqual(results[0]["openalex_source_id"], "S123")
+        self.assertEqual(results[0]["issns"], ["1070-6631", "1089-7666"])
+        self.assertEqual(get.call_args.kwargs["params"]["filter"], "type:journal")
 
     @patch("paper_fetcher.fetch_crossref_papers")
     @patch("paper_fetcher.fetch_openalex_papers")

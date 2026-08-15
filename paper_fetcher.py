@@ -10,6 +10,7 @@ import requests
 from config import JOURNALS
 
 OPENALEX_URL = "https://api.openalex.org/works"
+OPENALEX_SOURCES_URL = "https://api.openalex.org/sources"
 CROSSREF_URL = "https://api.crossref.org/works"
 
 
@@ -62,8 +63,48 @@ def _within_date_range(paper: dict[str, Any], start_date: date, end_date: date) 
     return start_date <= published <= end_date
 
 
-def _journal_config(journal_name: str) -> dict[str, Any]:
-    return JOURNALS.get(journal_name, {})
+def _journal_config(journal_name: str, journals: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
+    return (journals or JOURNALS).get(journal_name, {})
+
+
+def _openalex_source_id(source_id: str | None) -> str | None:
+    if not source_id:
+        return None
+    return source_id.rstrip("/").split("/")[-1]
+
+
+def search_journals(query: str, limit: int = 10) -> list[dict[str, Any]]:
+    query = query.strip()
+    if not query:
+        return []
+
+    response = requests.get(
+        OPENALEX_SOURCES_URL,
+        params={"search": query, "filter": "type:journal", "per-page": limit},
+        timeout=30,
+    )
+    response.raise_for_status()
+    results = response.json().get("results", [])
+    matches: list[dict[str, Any]] = []
+    for item in results:
+        display_name = item.get("display_name")
+        source_id = _openalex_source_id(item.get("id"))
+        if not display_name or not source_id:
+            continue
+        issns = item.get("issn") or []
+        issn_l = item.get("issn_l")
+        if issn_l and issn_l not in issns:
+            issns.insert(0, issn_l)
+        matches.append(
+            {
+                "display_name": display_name,
+                "openalex_name": display_name,
+                "openalex_source_id": source_id,
+                "crossref_container": display_name,
+                "issns": issns,
+            }
+        )
+    return matches
 
 
 def _extract_openalex_paper(item: dict[str, Any]) -> dict[str, Any]:
@@ -142,8 +183,13 @@ def _dedupe_papers(papers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
-def fetch_openalex_papers(journal_name: str, start_date: date, end_date: date) -> list[dict[str, Any]]:
-    journal_config = _journal_config(journal_name)
+def fetch_openalex_papers(
+    journal_name: str,
+    start_date: date,
+    end_date: date,
+    journals: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    journal_config = _journal_config(journal_name, journals)
     source_id = journal_config.get("openalex_source_id")
     if not source_id:
         return []
@@ -175,10 +221,17 @@ def fetch_openalex_papers(journal_name: str, start_date: date, end_date: date) -
     return papers
 
 
-def fetch_crossref_papers(journal_name: str, start_date: date, end_date: date) -> list[dict[str, Any]]:
+def fetch_crossref_papers(
+    journal_name: str,
+    start_date: date,
+    end_date: date,
+    journals: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    journal_config = _journal_config(journal_name, journals)
+    container_title = journal_config.get("crossref_container") or journal_name
     params = {
         "filter": f"from-pub-date:{_iso(start_date)},until-pub-date:{_iso(end_date)},type:journal-article",
-        "query.container-title": journal_name,
+        "query.container-title": container_title,
         "rows": 200,
         "sort": "published",
         "order": "desc",
@@ -187,11 +240,16 @@ def fetch_crossref_papers(journal_name: str, start_date: date, end_date: date) -
     response.raise_for_status()
     items = response.json().get("message", {}).get("items", [])
     papers = [_extract_crossref_paper(item) for item in items]
-    journal_lower = journal_name.lower()
+    journal_lower = container_title.lower()
     return [paper for paper in papers if journal_lower in paper.get("journal", "").lower()]
 
 
-def fetch_papers(journal_name: str, start_date: date, end_date: date) -> tuple[list[dict[str, Any]], list[str]]:
+def fetch_papers(
+    journal_name: str,
+    start_date: date,
+    end_date: date,
+    journals: dict[str, dict[str, Any]] | None = None,
+) -> tuple[list[dict[str, Any]], list[str]]:
     if end_date < start_date:
         raise PaperFetcherError("End date must be on or after start date.")
 
@@ -199,7 +257,7 @@ def fetch_papers(journal_name: str, start_date: date, end_date: date) -> tuple[l
     errors: list[str] = []
     for fetcher in (fetch_openalex_papers, fetch_crossref_papers):
         try:
-            papers.extend(fetcher(journal_name, start_date, end_date))
+            papers.extend(fetcher(journal_name, start_date, end_date, journals))
         except requests.RequestException as exc:
             errors.append(f"{fetcher.__name__} failed: {exc}")
 

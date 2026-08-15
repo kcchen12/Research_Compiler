@@ -23,7 +23,7 @@ from config import (
 )
 from database import PaperDatabase
 from digest import build_digest_markdown, markdown_to_html
-from paper_fetcher import PaperFetcherError, fetch_papers
+from paper_fetcher import PaperFetcherError, fetch_papers, search_journals
 from relevance import rank_papers
 from summarizer import INSUFFICIENT_TEXT_SUMMARY, PaperSummarizer, SummarizationError
 
@@ -55,6 +55,8 @@ st.set_page_config(page_title="Research Paper Digest", layout="wide")
 ensure_data_dir()
 config = load_config()
 db = PaperDatabase(DB_PATH)
+custom_journals = db.get_custom_journals()
+available_journals = {**JOURNALS, **custom_journals}
 
 
 if "new_papers" not in st.session_state:
@@ -73,6 +75,8 @@ if "last_ai_request_at" not in st.session_state:
     st.session_state.last_ai_request_at = 0.0
 if "gemini_token_window" not in st.session_state:
     st.session_state.gemini_token_window = []
+if "journal_search_results" not in st.session_state:
+    st.session_state.journal_search_results = []
 
 
 def _prune_gemini_token_window(model_id: str) -> None:
@@ -125,7 +129,7 @@ with st.sidebar:
     st.subheader("AI Settings")
     provider_options = ["gemini"]
     configured_provider = (
-        config.ai_provider if config.ai_provider in provider_options else "openai"
+        config.ai_provider if config.ai_provider in provider_options else "gemini"
     )
     ai_provider = st.selectbox(
         "Summary provider",
@@ -189,7 +193,42 @@ with st.sidebar:
         db.reset_history()
         st.success("Digest history and cached summaries reset.")
 
-journal = st.selectbox("Journal", list(JOURNALS.keys()), index=0)
+    st.divider()
+    st.subheader("Journals")
+    with st.form("journal_search_form"):
+        journal_query = st.text_input("Add journal by name")
+        search_submitted = st.form_submit_button("Search Journals")
+    if search_submitted:
+        with st.spinner("Searching journals..."):
+            try:
+                st.session_state.journal_search_results = search_journals(journal_query)
+            except Exception as exc:
+                st.session_state.journal_search_results = []
+                st.warning(f"Journal search failed: {exc}")
+
+    if st.session_state.journal_search_results:
+        result_labels = [
+            f"{item['display_name']} ({', '.join(item.get('issns') or ['no ISSN'])})"
+            for item in st.session_state.journal_search_results
+        ]
+        selected_result_label = st.selectbox("Search results", result_labels)
+        selected_result = st.session_state.journal_search_results[
+            result_labels.index(selected_result_label)
+        ]
+        if st.button("Add Selected Journal"):
+            db.add_custom_journal(selected_result)
+            st.session_state.journal_search_results = []
+            st.success(f"Added {selected_result['display_name']}.")
+            st.rerun()
+
+    if custom_journals:
+        removable = st.selectbox("Saved custom journals", list(custom_journals.keys()))
+        if st.button("Remove Custom Journal"):
+            db.delete_custom_journal(removable)
+            st.success(f"Removed {removable}.")
+            st.rerun()
+
+journal = st.selectbox("Journal", list(available_journals.keys()), index=0)
 
 preset = st.selectbox("Date Range", ["Past 7 days", "Past 14 days", "Past 30 days", "Custom"])
 if preset == "Past 7 days":
@@ -219,7 +258,12 @@ if st.button("Find New Papers"):
     else:
         with st.spinner("Fetching papers..."):
             try:
-                papers, warnings = fetch_papers(journal, start_date, end_date)
+                papers, warnings = fetch_papers(
+                    journal,
+                    start_date,
+                    end_date,
+                    journals=available_journals,
+                )
             except PaperFetcherError as exc:
                 st.error(f"Failed to fetch papers: {exc}")
                 papers, warnings = [], []
