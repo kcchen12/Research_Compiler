@@ -259,7 +259,11 @@ interests = st.text_area(
     value="vortex shedding, oscillating cylinder, wake flow, drag, lift, CFD",
 )
 
-if st.button("Find New Papers"):
+find_col, digest_col = st.columns(2)
+find_clicked = find_col.button("Find New Papers", use_container_width=True)
+generate_clicked = digest_col.button("Generate Digest", use_container_width=True)
+
+if find_clicked:
     if end_date < start_date:
         st.error("End date must be on or after start date.")
     else:
@@ -340,7 +344,7 @@ for paper in st.session_state.ranked_papers:
         st.write(f"**Authors:** {', '.join(paper.get('authors') or []) or 'N/A'}")
         st.write(f"**Abstract:** {paper.get('abstract') or 'N/A'}")
 
-if st.button("Generate Digest"):
+if generate_clicked:
     all_new_papers = st.session_state.new_papers
     new_papers = selected_digest_papers
     if not new_papers:
