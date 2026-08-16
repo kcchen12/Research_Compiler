@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from html import unescape
 import re
+import time
 from typing import Any
 
 import requests
@@ -16,6 +17,41 @@ CROSSREF_URL = "https://api.crossref.org/works"
 
 class PaperFetcherError(Exception):
     pass
+
+
+def _retry_delay(response: requests.Response, attempt: int) -> float:
+    retry_after = response.headers.get("Retry-After")
+    if retry_after:
+        try:
+            return max(float(retry_after), 0.0)
+        except ValueError:
+            pass
+    return float(attempt)
+
+
+def _get_json(
+    url: str,
+    params: dict[str, Any],
+    service_name: str,
+    max_attempts: int = 3,
+) -> dict[str, Any]:
+    for attempt in range(1, max_attempts + 1):
+        response = requests.get(url, params=params, timeout=30)
+        if response.status_code != 429:
+            response.raise_for_status()
+            return response.json()
+
+        if attempt < max_attempts:
+            time.sleep(_retry_delay(response, attempt))
+            continue
+
+        raise requests.HTTPError(
+            f"{service_name} rate limit reached after {max_attempts} attempts. "
+            "Please wait a minute and try again.",
+            response=response,
+        )
+
+    raise PaperFetcherError(f"{service_name} returned no response.")
 
 
 def _iso(d: date) -> str:
@@ -78,13 +114,12 @@ def search_journals(query: str, limit: int = 10) -> list[dict[str, Any]]:
     if not query:
         return []
 
-    response = requests.get(
+    payload = _get_json(
         OPENALEX_SOURCES_URL,
         params={"search": query, "filter": "type:journal", "per-page": limit},
-        timeout=30,
+        service_name="OpenAlex",
     )
-    response.raise_for_status()
-    results = response.json().get("results", [])
+    results = payload.get("results", [])
     matches: list[dict[str, Any]] = []
     for item in results:
         display_name = item.get("display_name")
@@ -201,17 +236,20 @@ def fetch_openalex_papers(
     ]
     papers: list[dict[str, Any]] = []
     cursor: str | None = "*"
+    seen_cursors: set[str] = set()
 
     while cursor:
+        if cursor in seen_cursors:
+            break
+        seen_cursors.add(cursor)
+
         params = {
             "filter": ",".join(filters),
             "per-page": 100,
             "sort": "publication_date:desc",
             "cursor": cursor,
         }
-        response = requests.get(OPENALEX_URL, params=params, timeout=30)
-        response.raise_for_status()
-        payload = response.json()
+        payload = _get_json(OPENALEX_URL, params=params, service_name="OpenAlex")
         results = payload.get("results", [])
         papers.extend(_extract_openalex_paper(item) for item in results)
 
@@ -236,9 +274,10 @@ def fetch_crossref_papers(
         "sort": "published",
         "order": "desc",
     }
-    response = requests.get(CROSSREF_URL, params=params, timeout=30)
-    response.raise_for_status()
-    items = response.json().get("message", {}).get("items", [])
+    items = _get_json(CROSSREF_URL, params=params, service_name="Crossref").get(
+        "message",
+        {},
+    ).get("items", [])
     papers = [_extract_crossref_paper(item) for item in items]
     journal_lower = container_title.lower()
     return [paper for paper in papers if journal_lower in paper.get("journal", "").lower()]

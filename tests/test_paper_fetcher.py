@@ -2,8 +2,11 @@ from datetime import date
 import unittest
 from unittest.mock import Mock, patch
 
+import requests
+
 from paper_fetcher import (
     PaperFetcherError,
+    _get_json,
     fetch_openalex_papers,
     fetch_papers,
     search_journals,
@@ -75,6 +78,7 @@ class TestPaperFetcher(unittest.TestCase):
 
     def test_search_journals_normalizes_openalex_sources(self):
         response = Mock()
+        response.status_code = 200
         response.raise_for_status.return_value = None
         response.json.return_value = {
             "results": [
@@ -94,6 +98,81 @@ class TestPaperFetcher(unittest.TestCase):
         self.assertEqual(results[0]["openalex_source_id"], "S123")
         self.assertEqual(results[0]["issns"], ["1070-6631", "1089-7666"])
         self.assertEqual(get.call_args.kwargs["params"]["filter"], "type:journal")
+
+    @patch("paper_fetcher.time.sleep")
+    def test_get_json_retries_rate_limit_then_succeeds(self, sleep):
+        limited = Mock(status_code=429, headers={"Retry-After": "0"})
+        success = Mock(status_code=200)
+        success.raise_for_status.return_value = None
+        success.json.return_value = {"results": []}
+
+        with patch("paper_fetcher.requests.get", side_effect=[limited, success]) as get:
+            payload = _get_json("https://example.com", params={"q": "flow"}, service_name="OpenAlex")
+
+        self.assertEqual(payload, {"results": []})
+        self.assertEqual(get.call_count, 2)
+        sleep.assert_called_once_with(0.0)
+
+    @patch("paper_fetcher.time.sleep")
+    def test_get_json_raises_friendly_rate_limit_error_after_retries(self, sleep):
+        limited = Mock(status_code=429, headers={})
+
+        with patch("paper_fetcher.requests.get", return_value=limited):
+            with self.assertRaisesRegex(requests.HTTPError, "OpenAlex rate limit"):
+                _get_json("https://example.com", params={"q": "flow"}, service_name="OpenAlex")
+
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_fetch_openalex_papers_stops_on_repeated_cursor(self):
+        response = Mock()
+        response.status_code = 200
+        response.raise_for_status.return_value = None
+        response.json.side_effect = [
+            {
+                "meta": {"next_cursor": "repeat"},
+                "results": [
+                    {
+                        "title": "Paper 1",
+                        "publication_date": "2026-08-10",
+                        "doi": "https://doi.org/10.1017/jfm.2026.1",
+                        "abstract_inverted_index": {"flow": [0]},
+                        "authorships": [],
+                        "primary_location": {
+                            "source": {"display_name": "Journal of Fluid Mechanics"},
+                            "landing_page_url": "https://example.com/first",
+                        },
+                        "ids": {},
+                    }
+                ],
+            },
+            {
+                "meta": {"next_cursor": "repeat"},
+                "results": [
+                    {
+                        "title": "Paper 2",
+                        "publication_date": "2026-08-11",
+                        "doi": "https://doi.org/10.1017/jfm.2026.2",
+                        "abstract_inverted_index": {"wake": [0]},
+                        "authorships": [],
+                        "primary_location": {
+                            "source": {"display_name": "Journal of Fluid Mechanics"},
+                            "landing_page_url": "https://example.com/second",
+                        },
+                        "ids": {},
+                    }
+                ],
+            },
+        ]
+
+        with patch("paper_fetcher.requests.get", return_value=response) as get:
+            papers = fetch_openalex_papers(
+                "Journal of Fluid Mechanics",
+                date(2026, 8, 1),
+                date(2026, 8, 12),
+            )
+
+        self.assertEqual(len(papers), 2)
+        self.assertEqual(get.call_count, 2)
 
     @patch("paper_fetcher.fetch_crossref_papers")
     @patch("paper_fetcher.fetch_openalex_papers")
