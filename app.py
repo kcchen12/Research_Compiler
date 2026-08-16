@@ -8,8 +8,10 @@ import time
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 from streamlit.runtime.scriptrunner import get_script_run_ctx
 
+from audio_reader import build_audio_reader_html, digest_to_speech_text
 from config import (
     DB_PATH,
     JOURNALS,
@@ -155,28 +157,36 @@ with st.sidebar:
         if not configured_model.enabled:
             configured_model = recommended_model
         model_labels = [model.ui_label for model in gemini_models]
-        selected_model_label = st.selectbox(
-            "AI Model",
-            model_labels,
-            index=gemini_models.index(configured_model),
-        )
+        model_col, details_col = st.columns([0.72, 0.28], vertical_alignment="bottom")
+        with model_col:
+            selected_model_label = st.selectbox(
+                "AI Model",
+                model_labels,
+                index=gemini_models.index(configured_model),
+            )
         selected_gemini_model = gemini_models[model_labels.index(selected_model_label)]
         ai_model = selected_gemini_model.api_model_id
-        st.caption(f"Recommended for Research Compiler: {recommended_model.display_name}")
-        st.write(
-            "**Free-tier limits:**  \n"
-            f"{selected_gemini_model.rpm} requests/minute  \n"
-            f"{selected_gemini_model.tpm:,} tokens/minute  \n"
-            f"{selected_gemini_model.rpd} requests/day"
-        )
-        if selected_gemini_model.notes:
-            st.caption(selected_gemini_model.notes)
-        if selected_gemini_model.rpd <= 20:
-            st.warning("This model has a low daily free quota; large digests may exhaust it.")
-        st.caption(
-            "Free-tier quota information last updated: "
-            f"{format_quota_updated_date()}."
-        )
+        with details_col:
+            with st.popover("Details", use_container_width=True):
+                st.caption(
+                    f"Recommended for Research Compiler: {recommended_model.display_name}"
+                )
+                st.write(
+                    "**Free-tier limits:**  \n"
+                    f"{selected_gemini_model.rpm} requests/minute  \n"
+                    f"{selected_gemini_model.tpm:,} tokens/minute  \n"
+                    f"{selected_gemini_model.rpd} requests/day"
+                )
+                if selected_gemini_model.notes:
+                    st.caption(selected_gemini_model.notes)
+                if selected_gemini_model.rpd <= 20:
+                    st.warning(
+                        "This model has a low daily free quota; large digests may exhaust it."
+                    )
+                st.caption(
+                    "Free-tier quota information last updated: "
+                    f"{format_quota_updated_date()}."
+                )
     else:
         openai_default_model = (
             config.default_model
@@ -184,21 +194,6 @@ with st.sidebar:
             else "gpt-4o-mini"
         )
         ai_model = st.text_input("Model", value=openai_default_model)
-
-    st.divider()
-    st.subheader("History")
-    st.metric("Tracked in digest history", db.count_seen())
-
-    if st.button("View History"):
-        history = db.get_history(limit=500)
-        if history:
-            st.dataframe(pd.DataFrame(history), use_container_width=True)
-        else:
-            st.info("No digest history yet.")
-
-    if st.button("Reset History"):
-        db.reset_history()
-        st.success("Digest history and cached summaries reset.")
 
     st.divider()
     st.subheader("Journals")
@@ -234,6 +229,21 @@ with st.sidebar:
             db.delete_custom_journal(removable)
             st.success(f"Removed {removable}.")
             st.rerun()
+
+    st.divider()
+    st.subheader("History")
+    st.metric("Tracked in digest history", db.count_seen())
+
+    if st.button("View History"):
+        history = db.get_history(limit=500)
+        if history:
+            st.dataframe(pd.DataFrame(history), use_container_width=True)
+        else:
+            st.info("No digest history yet.")
+
+    if st.button("Reset History"):
+        db.reset_history()
+        st.success("Digest history and cached summaries reset.")
 
 journal = st.selectbox("Journal", list(available_journals.keys()), index=0)
 
@@ -438,6 +448,13 @@ if generate_clicked:
 if st.session_state.digest_markdown:
     st.markdown("---")
     st.subheader("Digest Preview")
+    with st.expander("Audio Reader", expanded=True):
+        components.html(
+            build_audio_reader_html(
+                digest_to_speech_text(st.session_state.digest_markdown)
+            ),
+            height=118,
+        )
     st.download_button(
         "Download Markdown",
         st.session_state.digest_markdown,
