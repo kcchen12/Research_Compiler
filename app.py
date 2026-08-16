@@ -76,7 +76,7 @@ st.markdown(
         padding-top: 0;
     }
     [data-testid="stSidebar"] hr {
-        margin: 0.55rem 0;
+        margin: 0.75rem 0;
     }
     [data-testid="stSidebar"] h3 {
         padding-top: 0.2rem;
