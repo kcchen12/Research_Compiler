@@ -56,6 +56,9 @@ st.set_page_config(page_title="Research Paper Digest", layout="wide")
 st.markdown(
     """
     <style>
+    .block-container {
+        padding-top: 1rem;
+    }
     [data-testid="stSidebar"] [data-testid="stSidebarContent"] {
         padding-top: 0.25rem;
     }
