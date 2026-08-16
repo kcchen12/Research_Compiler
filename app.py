@@ -385,11 +385,6 @@ for paper in st.session_state.ranked_papers:
     with st.expander(
         f"[{badge}] {paper.get('title')} (score: {paper.get('relevance_score', 0):.3f})"
     ):
-        st.caption(
-            "Score breakdown: "
-            f"exact {paper.get('exact_relevance_score', 0):.3f}, "
-            f"related {paper.get('semantic_relevance_score', 0):.3f}"
-        )
         st.write(f"**Journal:** {paper.get('journal')}")
         st.write(f"**Published:** {paper.get('publication_date')}")
         st.write(f"**DOI:** {paper.get('doi') or 'N/A'}")
