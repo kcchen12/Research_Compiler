@@ -57,7 +57,13 @@ st.markdown(
     """
     <style>
     [data-testid="stSidebar"] [data-testid="stSidebarContent"] {
-        padding-top: 1rem;
+        padding-top: 0.25rem;
+    }
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
+        gap: 0.45rem;
+    }
+    [data-testid="stSidebar"] [data-testid="stVerticalBlock"] > div:first-child {
+        padding-top: 0;
     }
     [data-testid="stSidebar"] hr {
         margin: 0.55rem 0;
