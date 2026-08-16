@@ -59,6 +59,12 @@ st.markdown(
     [data-testid="stSidebar"] [data-testid="stSidebarContent"] {
         padding-top: 1rem;
     }
+    [data-testid="stSidebar"] hr {
+        margin: 0.55rem 0;
+    }
+    [data-testid="stSidebar"] h3 {
+        padding-top: 0.2rem;
+    }
     </style>
     """,
     unsafe_allow_html=True,
