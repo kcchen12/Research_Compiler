@@ -204,9 +204,11 @@ with st.sidebar:
         ai_model = selected_gemini_model.api_model_id
         with details_slot:
             with st.popover("Details", use_container_width=True):
-                st.caption(
-                    f"Recommended for Research Compiler: {recommended_model.display_name}"
-                )
+                st.write(f"**Selected model:** {selected_gemini_model.display_name}")
+                if selected_gemini_model.api_model_id != recommended_model.api_model_id:
+                    st.caption(
+                        f"Default recommendation: {recommended_model.display_name}"
+                    )
                 st.write(
                     "**Free-tier limits:**  \n"
                     f"{selected_gemini_model.rpm} requests/minute  \n"
