@@ -6,6 +6,7 @@ from paper_fetcher import (
     PaperFetcherError,
     fetch_openalex_papers,
     fetch_papers,
+    _get_json,
     search_journals,
 )
 
@@ -94,6 +95,30 @@ class TestPaperFetcher(unittest.TestCase):
         self.assertEqual(results[0]["openalex_source_id"], "S123")
         self.assertEqual(results[0]["issns"], ["1070-6631", "1089-7666"])
         self.assertEqual(get.call_args.kwargs["params"]["filter"], "type:journal")
+
+    @patch("paper_fetcher.time.sleep")
+    def test_get_json_retries_rate_limit_then_succeeds(self, sleep):
+        limited = Mock(status_code=429, headers={"Retry-After": "1"})
+        success = Mock(status_code=200)
+        success.raise_for_status.return_value = None
+        success.json.return_value = {"results": []}
+
+        with patch("paper_fetcher.requests.get", side_effect=[limited, success]) as get:
+            payload = _get_json("https://example.com", params={"q": "flow"})
+
+        self.assertEqual(payload, {"results": []})
+        self.assertEqual(get.call_count, 2)
+        sleep.assert_called_once_with(1.0)
+
+    @patch("paper_fetcher.time.sleep")
+    def test_get_json_raises_friendly_rate_limit_error_after_retries(self, sleep):
+        limited = Mock(status_code=429, headers={})
+
+        with patch("paper_fetcher.requests.get", return_value=limited):
+            with self.assertRaisesRegex(PaperFetcherError, "rate limiting"):
+                _get_json("https://example.com", params={"q": "flow"})
+
+        self.assertEqual(sleep.call_count, 2)
 
     @patch("paper_fetcher.fetch_crossref_papers")
     @patch("paper_fetcher.fetch_openalex_papers")

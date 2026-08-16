@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date
 from html import unescape
 import re
+import time
 from typing import Any
 
 import requests
@@ -12,10 +13,49 @@ from config import JOURNALS
 OPENALEX_URL = "https://api.openalex.org/works"
 OPENALEX_SOURCES_URL = "https://api.openalex.org/sources"
 CROSSREF_URL = "https://api.crossref.org/works"
+REQUEST_RETRY_STATUSES = {429, 500, 502, 503, 504}
+REQUEST_RETRY_ATTEMPTS = 3
+REQUEST_BACKOFF_SECONDS = 2.0
 
 
 class PaperFetcherError(Exception):
     pass
+
+
+def _retry_delay(response: requests.Response, attempt: int) -> float:
+    retry_after = response.headers.get("Retry-After")
+    if retry_after:
+        try:
+            return max(0.0, float(retry_after))
+        except ValueError:
+            pass
+    return REQUEST_BACKOFF_SECONDS * attempt
+
+
+def _get_json(
+    url: str,
+    params: dict[str, Any],
+    timeout: int = 30,
+    service_name: str = "The paper index",
+) -> dict[str, Any]:
+    last_response: requests.Response | None = None
+    for attempt in range(1, REQUEST_RETRY_ATTEMPTS + 1):
+        response = requests.get(url, params=params, timeout=timeout)
+        last_response = response
+        if response.status_code not in REQUEST_RETRY_STATUSES:
+            response.raise_for_status()
+            return response.json()
+        if attempt < REQUEST_RETRY_ATTEMPTS:
+            time.sleep(_retry_delay(response, attempt))
+
+    if last_response is not None:
+        if last_response.status_code == 429:
+            raise PaperFetcherError(
+                f"{service_name} is temporarily rate limiting requests. "
+                "Please wait a minute, then try again."
+            )
+        last_response.raise_for_status()
+    raise PaperFetcherError("Request failed before a response was received.")
 
 
 def _iso(d: date) -> str:
@@ -209,9 +249,7 @@ def fetch_openalex_papers(
             "sort": "publication_date:desc",
             "cursor": cursor,
         }
-        response = requests.get(OPENALEX_URL, params=params, timeout=30)
-        response.raise_for_status()
-        payload = response.json()
+        payload = _get_json(OPENALEX_URL, params=params, service_name="OpenAlex")
         results = payload.get("results", [])
         papers.extend(_extract_openalex_paper(item) for item in results)
 
@@ -236,9 +274,10 @@ def fetch_crossref_papers(
         "sort": "published",
         "order": "desc",
     }
-    response = requests.get(CROSSREF_URL, params=params, timeout=30)
-    response.raise_for_status()
-    items = response.json().get("message", {}).get("items", [])
+    items = _get_json(CROSSREF_URL, params=params, service_name="Crossref").get(
+        "message",
+        {},
+    ).get("items", [])
     papers = [_extract_crossref_paper(item) for item in items]
     journal_lower = container_title.lower()
     return [paper for paper in papers if journal_lower in paper.get("journal", "").lower()]
@@ -258,7 +297,7 @@ def fetch_papers(
     for fetcher in (fetch_openalex_papers, fetch_crossref_papers):
         try:
             papers.extend(fetcher(journal_name, start_date, end_date, journals))
-        except requests.RequestException as exc:
+        except (PaperFetcherError, requests.RequestException) as exc:
             errors.append(f"{fetcher.__name__} failed: {exc}")
 
     if not papers and errors:
