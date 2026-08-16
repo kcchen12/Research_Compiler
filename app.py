@@ -158,15 +158,19 @@ with st.sidebar:
             configured_model = recommended_model
         model_labels = [model.ui_label for model in gemini_models]
         default_model_index = gemini_models.index(configured_model)
-        current_model_label = st.session_state.get(
-            "ai_model_select",
-            model_labels[default_model_index],
-        )
-        selected_gemini_model = gemini_models[model_labels.index(current_model_label)]
-        ai_model = selected_gemini_model.api_model_id
         label_col, details_col = st.columns([0.62, 0.38], vertical_alignment="center")
         label_col.markdown("**AI Model**")
-        with details_col:
+        details_slot = details_col.empty()
+        selected_model_label = st.selectbox(
+            "AI Model",
+            model_labels,
+            index=default_model_index,
+            key="ai_model_select",
+            label_visibility="collapsed",
+        )
+        selected_gemini_model = gemini_models[model_labels.index(selected_model_label)]
+        ai_model = selected_gemini_model.api_model_id
+        with details_slot:
             with st.popover("Details", use_container_width=True):
                 st.caption(
                     f"Recommended for Research Compiler: {recommended_model.display_name}"
@@ -187,15 +191,6 @@ with st.sidebar:
                     "Free-tier quota information last updated: "
                     f"{format_quota_updated_date()}."
                 )
-        selected_model_label = st.selectbox(
-            "AI Model",
-            model_labels,
-            index=default_model_index,
-            key="ai_model_select",
-            label_visibility="collapsed",
-        )
-        selected_gemini_model = gemini_models[model_labels.index(selected_model_label)]
-        ai_model = selected_gemini_model.api_model_id
     else:
         openai_default_model = (
             config.default_model
