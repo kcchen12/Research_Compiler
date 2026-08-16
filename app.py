@@ -53,6 +53,16 @@ def _launch_with_streamlit_when_run_directly() -> None:
 _launch_with_streamlit_when_run_directly()
 
 st.set_page_config(page_title="Research Paper Digest", layout="wide")
+st.markdown(
+    """
+    <style>
+    [data-testid="stSidebar"] [data-testid="stSidebarContent"] {
+        padding-top: 1rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 ensure_data_dir()
 config = load_config()
