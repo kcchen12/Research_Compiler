@@ -13,6 +13,10 @@ from config import JOURNALS
 OPENALEX_URL = "https://api.openalex.org/works"
 OPENALEX_SOURCES_URL = "https://api.openalex.org/sources"
 CROSSREF_URL = "https://api.crossref.org/works"
+REQUEST_TIMEOUT_SECONDS = 15
+MAX_REQUEST_ATTEMPTS = 3
+MAX_RETRY_DELAY_SECONDS = 2.0
+OPENALEX_MAX_PAGES = 10
 
 
 class PaperFetcherError(Exception):
@@ -23,20 +27,20 @@ def _retry_delay(response: requests.Response, attempt: int) -> float:
     retry_after = response.headers.get("Retry-After")
     if retry_after:
         try:
-            return max(float(retry_after), 0.0)
+            return min(max(float(retry_after), 0.0), MAX_RETRY_DELAY_SECONDS)
         except ValueError:
             pass
-    return float(attempt)
+    return min(float(attempt), MAX_RETRY_DELAY_SECONDS)
 
 
 def _get_json(
     url: str,
     params: dict[str, Any],
     service_name: str,
-    max_attempts: int = 3,
+    max_attempts: int = MAX_REQUEST_ATTEMPTS,
 ) -> dict[str, Any]:
     for attempt in range(1, max_attempts + 1):
-        response = requests.get(url, params=params, timeout=30)
+        response = requests.get(url, params=params, timeout=REQUEST_TIMEOUT_SECONDS)
         if response.status_code != 429:
             response.raise_for_status()
             return response.json()
@@ -237,11 +241,13 @@ def fetch_openalex_papers(
     papers: list[dict[str, Any]] = []
     cursor: str | None = "*"
     seen_cursors: set[str] = set()
+    pages_fetched = 0
 
-    while cursor:
+    while cursor and pages_fetched < OPENALEX_MAX_PAGES:
         if cursor in seen_cursors:
             break
         seen_cursors.add(cursor)
+        pages_fetched += 1
 
         params = {
             "filter": ",".join(filters),
