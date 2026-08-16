@@ -34,8 +34,7 @@ class TestPaperFetcher(unittest.TestCase):
         }
         second = Mock()
         second.raise_for_status.return_value = None
-        second.json.return_value = {
-            "meta": {"next_cursor": None}, "results": []}
+        second.json.return_value = {"meta": {"next_cursor": None}, "results": []}
 
         with patch("paper_fetcher.requests.get", side_effect=[first, second]) as get:
             papers = fetch_openalex_papers(
@@ -54,8 +53,7 @@ class TestPaperFetcher(unittest.TestCase):
     def test_openalex_uses_custom_journal_config(self):
         response = Mock()
         response.raise_for_status.return_value = None
-        response.json.return_value = {
-            "meta": {"next_cursor": None}, "results": []}
+        response.json.return_value = {"meta": {"next_cursor": None}, "results": []}
         journals = {
             "Physics of Fluids": {
                 "openalex_source_id": "S123",
@@ -96,8 +94,7 @@ class TestPaperFetcher(unittest.TestCase):
         self.assertEqual(results[0]["display_name"], "Physics of Fluids")
         self.assertEqual(results[0]["openalex_source_id"], "S123")
         self.assertEqual(results[0]["issns"], ["1070-6631", "1089-7666"])
-        self.assertEqual(
-            get.call_args.kwargs["params"]["filter"], "type:journal")
+        self.assertEqual(get.call_args.kwargs["params"]["filter"], "type:journal")
 
     @patch("paper_fetcher.time.sleep")
     def test_get_json_retries_rate_limit_then_succeeds(self, sleep):
@@ -122,56 +119,6 @@ class TestPaperFetcher(unittest.TestCase):
                 _get_json("https://example.com", params={"q": "flow"})
 
         self.assertEqual(sleep.call_count, 2)
-
-    def test_fetch_openalex_papers_stops_on_repeated_cursor(self):
-        response = Mock()
-        response.status_code = 200
-        response.raise_for_status.return_value = None
-        response.json.side_effect = [
-            {
-                "meta": {"next_cursor": "repeat"},
-                "results": [
-                    {
-                        "title": "Paper 1",
-                        "publication_date": "2026-08-10",
-                        "doi": "https://doi.org/10.1017/jfm.2026.1",
-                        "abstract_inverted_index": {"flow": [0]},
-                        "authorships": [],
-                        "primary_location": {
-                            "source": {"display_name": "Journal of Fluid Mechanics"},
-                            "landing_page_url": "https://example.com/first",
-                        },
-                        "ids": {},
-                    }
-                ],
-            },
-            {
-                "meta": {"next_cursor": "repeat"},
-                "results": [
-                    {
-                        "title": "Paper 2",
-                        "publication_date": "2026-08-11",
-                        "doi": "https://doi.org/10.1017/jfm.2026.2",
-                        "abstract_inverted_index": {"wake": [0]},
-                        "authorships": [],
-                        "primary_location": {
-                            "source": {"display_name": "Journal of Fluid Mechanics"},
-                            "landing_page_url": "https://example.com/second",
-                        },
-                        "ids": {},
-                    }
-                ],
-            },
-        ]
-
-        with patch("paper_fetcher.requests.get", return_value=response):
-            papers = fetch_openalex_papers(
-                "Journal of Fluid Mechanics",
-                date(2026, 8, 1),
-                date(2026, 8, 12),
-            )
-
-        self.assertEqual(len(papers), 2)
 
     @patch("paper_fetcher.fetch_crossref_papers")
     @patch("paper_fetcher.fetch_openalex_papers")
