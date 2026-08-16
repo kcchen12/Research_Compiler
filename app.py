@@ -62,6 +62,13 @@ st.markdown(
     [data-testid="stSidebar"] [data-testid="stSidebarContent"] {
         padding-top: 0.25rem;
     }
+    [data-testid="stSidebarCollapseButton"] {
+        margin-top: 0.25rem;
+    }
+    [data-testid="stSidebarCollapseButton"] button {
+        height: 2rem;
+        width: 2rem;
+    }
     [data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
         gap: 0.45rem;
     }
