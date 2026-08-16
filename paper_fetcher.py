@@ -241,8 +241,13 @@ def fetch_openalex_papers(
     ]
     papers: list[dict[str, Any]] = []
     cursor: str | None = "*"
+    seen_cursors: set[str] = set()
 
     while cursor:
+        if cursor in seen_cursors:
+            break
+        seen_cursors.add(cursor)
+
         params = {
             "filter": ",".join(filters),
             "per-page": 100,
