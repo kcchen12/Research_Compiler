@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import calendar
 from datetime import date, timedelta
 from pathlib import Path
 import subprocess
@@ -285,13 +286,27 @@ with st.sidebar:
 
 journal = st.selectbox("Journal", list(available_journals.keys()), index=0)
 
-preset = st.selectbox("Date Range", ["Past 7 days", "Past 14 days", "Past 30 days", "Custom"])
+month_options = list(calendar.month_name)[1:]
+date_options = ["Past 7 days", "Past 14 days", "Past 30 days", *month_options, "Custom"]
+preset = st.selectbox("Date Range", date_options)
 if preset == "Past 7 days":
     start_date, end_date = date.today() - timedelta(days=7), date.today()
 elif preset == "Past 14 days":
     start_date, end_date = date.today() - timedelta(days=14), date.today()
 elif preset == "Past 30 days":
     start_date, end_date = date.today() - timedelta(days=30), date.today()
+elif preset in month_options:
+    selected_year = st.number_input(
+        "Year",
+        min_value=1900,
+        max_value=date.today().year + 1,
+        value=date.today().year,
+        step=1,
+    )
+    month_number = month_options.index(preset) + 1
+    last_day = calendar.monthrange(int(selected_year), month_number)[1]
+    start_date = date(int(selected_year), month_number, 1)
+    end_date = date(int(selected_year), month_number, last_day)
 else:
     custom = st.date_input(
         "Custom date range",
@@ -304,7 +319,8 @@ else:
 
 interests = st.text_area(
     "Research interests (comma separated)",
-    value="vortex shedding, oscillating cylinder, wake flow, drag, lift, CFD",
+    value="",
+    placeholder="Optional, for ranking only. Leave blank to include all papers from the selected period.",
 )
 
 find_col, digest_col = st.columns(2)
